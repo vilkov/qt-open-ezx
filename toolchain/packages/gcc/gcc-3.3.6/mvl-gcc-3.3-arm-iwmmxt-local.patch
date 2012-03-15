@@ -1,0 +1,343 @@
+diff -urN gcc-3.3.6.cross/gcc/config/arm/arm.c gcc-3.3.6.cross-mod/gcc/config/arm/arm.c
+--- gcc-3.3.6.cross/gcc/config/arm/arm.c	2006-09-14 09:21:01.370750278 +0200
++++ gcc-3.3.6.cross-mod/gcc/config/arm/arm.c	2006-09-14 12:19:16.852245603 +0200
+@@ -2407,9 +2407,6 @@
+ {
+   int call_type = TARGET_LONG_CALLS ? CALL_LONG : CALL_NORMAL;
+ 
+-  if (cfun->machine->sibcall_blocked)
+-    return false;
+-
+   /* Never tailcall something for which we have no decl, or if we
+      are in Thumb mode.  */
+   if (decl == NULL || TARGET_THUMB)
+@@ -8018,7 +8015,12 @@
+ 	     We can ignore floats_offset since that was already included in
+ 	     the live_regs_mask.  */
+ 	  lrm_count += (lrm_count % 2 ? 2 : 1);
+-	      
++     /* Should the above be an assert instead?  must-be-odd? */
++
++     /* However, we can't ignore pretend_args_size, which is mostly
++        between $fp and the register save area.  */
++     lrm_count += current_function_pretend_args_size / 4;
++
+ 	  for (reg = FIRST_IWMMXT_REGNUM; reg <= LAST_IWMMXT_REGNUM; reg++)
+ 	    if (regs_ever_live[reg] && !call_used_regs[reg])
+ 	      {
+@@ -8048,6 +8050,17 @@
+       else
+ 	saved_regs_mask &= ~ (1 << PC_REGNUM);
+ 
++      /* If r3 is marked as a saved register, than it was saved just to
++    preserve stack alignment.  We don't want to actually restore
++    it if we're doing a sibcall, since it might have an outgoing
++    argument by this point.  */
++      if (!really_return && (saved_regs_mask & (1 << 3)))
++   {
++     if (!TARGET_IWMMXT) abort ();
++     asm_fprintf (f, "\tadd\t%r, %r, #4\n", SP_REGNUM, SP_REGNUM);
++     saved_regs_mask &= ~ (1 << 3);
++   }
++
+       /* We must use SP as the base register, because SP is one of the
+          registers being restored.  If an interrupt or page fault
+          happens in the ldm instruction, the SP might or might not
+@@ -8147,6 +8160,17 @@
+ 	}
+       else if (saved_regs_mask)
+ 	{
++     /* If r3 is marked as a saved register, than it was saved just to
++        preserve stack alignment.  We don't want to actually restore
++        it if we're doing a sibcall, since it might have an outgoing
++        argument by this point.  */
++     if (!really_return && (saved_regs_mask & (1 << 3)))
++       {
++         if (!TARGET_IWMMXT) abort ();
++         asm_fprintf (f, "\tadd\t%r, %r, #4\n", SP_REGNUM, SP_REGNUM);
++         saved_regs_mask &= ~ (1 << 3);
++       }
++
+ 	  if (saved_regs_mask & (1 << SP_REGNUM))
+ 	    /* Note - write back to the stack register is not enabled
+ 	       (ie "ldmfd sp!...").  We know that the stack pointer is
+@@ -12639,28 +12663,20 @@
+ arm_output_load_gr (operands)
+      rtx * operands;
+ {
+-  rtx reg;
+   rtx offset;
+-  rtx wcgr;
+   rtx sum;
+-  
+-  if (GET_CODE (operands [1]) != MEM
+-      || GET_CODE (sum = XEXP (operands [1], 0)) != PLUS
+-      || GET_CODE (reg = XEXP (sum, 0)) != REG
+-      || GET_CODE (offset = XEXP (sum, 1)) != CONST_INT
+-      || ((INTVAL (offset) < 1024) && (INTVAL (offset) > -1024)))
+-    return "wldrw%?\t%0, %1";
++
++  if (current_insn_predicate == NULL
++      && (GET_CODE (operands [1]) != MEM
++     || GET_CODE (sum = XEXP (operands [1], 0)) != PLUS
++     || GET_CODE (XEXP (sum, 0)) != REG
++     || GET_CODE (offset = XEXP (sum, 1)) != CONST_INT
++     || ((INTVAL (offset) < 1024) && (INTVAL (offset) > -1024))))
++    return "wldrw\t%0, %1";  
+   
+   /* Fix up an out-of-range load of a GR register.  */  
+-  output_asm_insn ("str%?\t%0, [sp, #-4]!\t@ Start of GR load expansion", & reg);
+-  wcgr = operands[0];
+-  operands[0] = reg;
+-  output_asm_insn ("ldr%?\t%0, %1", operands);
+-
+-  operands[0] = wcgr;
+-  operands[1] = reg;
+-  output_asm_insn ("tmcr%?\t%0, %1", operands);
+-  output_asm_insn ("ldr%?\t%0, [sp], #4\t@ End of GR load expansion", & reg);
++  output_asm_insn ("ldr%?\t%2, %1", operands);
++  output_asm_insn ("tmcr%?\t%0, %2", operands);
+ 
+   return "";
+ }
+diff -urN gcc-3.3.6.cross/gcc/config/arm/arm.h gcc-3.3.6.cross-mod/gcc/config/arm/arm.h
+--- gcc-3.3.6.cross/gcc/config/arm/arm.h	2006-09-14 09:21:01.362751183 +0200
++++ gcc-3.3.6.cross-mod/gcc/config/arm/arm.h	2006-09-14 12:25:51.016204435 +0200
+@@ -227,6 +227,9 @@
+ %{march=armv5t:-D__ARM_ARCH_5T__} \
+ %{march=armv5e:-D__ARM_ARCH_5E__} \
+ %{march=armv5te:-D__ARM_ARCH_5TE__} \
++%{march=iwmmxt:-D__ARM_ARCH_5TE__} \
++%{march=iwmmxt:-D__XSCALE__} \
++%{march=iwmmxt:-D__IWMMXT__} \
+ %{!march=*: \
+  %{mcpu=arm2:-D__ARM_ARCH_2__} \
+  %{mcpu=arm250:-D__ARM_ARCH_2__} \
+@@ -1170,6 +1173,14 @@
+    or could index an array.  */
+ #define REGNO_REG_CLASS(REGNO)  arm_regno_class (REGNO)
+ 
++/* FPA registers can't do dubreg as all values are reformatted to internal
++   precision.  IWMMXT_GR_REGS is here to prevent reload from loading
++   (SImode subregs of) DImode values into them.  */
++#define CANNOT_CHANGE_MODE_CLASS(FROM, TO, CLASS)  \
++  (GET_MODE_SIZE (FROM) != GET_MODE_SIZE (TO)      \
++   ? (IWMMXT_GR_REGS == CLASS) ? 1 :           \
++     reg_classes_intersect_p (FPU_REGS, (CLASS)) : 0)
++
+ /* The class value for index registers, and the one for base regs.  */
+ #define INDEX_REG_CLASS  (TARGET_THUMB ? LO_REGS : GENERAL_REGS)
+ #define BASE_REG_CLASS   (TARGET_THUMB ? LO_REGS : GENERAL_REGS)
+@@ -1293,12 +1304,16 @@
+        : NO_REGS)) 							\
+    : NO_REGS)
+ 
+-/* Return the register class of a scratch register needed to copy IN into
+-   or out of a register in CLASS in MODE.  If it can be done directly,
+-   NO_REGS is returned.  */
++/* Return the register class of a scratch register needed to copy a
++   register CLASS in MODE to X.  If it can be done directly, NO_REGS
++   is returned.  */
+ #define SECONDARY_OUTPUT_RELOAD_CLASS(CLASS, MODE, X)		\
+   (TARGET_ARM ?							\
+    (((MODE) == HImode && ! arm_arch4 && true_regnum (X) == -1)	\
++    ? GENERAL_REGS :                       \
++    CLASS == IWMMXT_GR_REGS                    \
++    && (!REG_P (X) || !HARD_REGISTER_P (X)         \
++   || REGNO_REG_CLASS (REGNO (X)) != GENERAL_REGS)     \
+     ? GENERAL_REGS : NO_REGS)					\
+    : THUMB_SECONDARY_OUTPUT_RELOAD_CLASS (CLASS, MODE, X))
+    
+@@ -1308,6 +1323,11 @@
+    (((CLASS) == IWMMXT_REGS || (CLASS) == IWMMXT_GR_REGS)	\
+       && CONSTANT_P (X))					\
+    ? GENERAL_REGS :						\
++   CLASS == IWMMXT_GR_REGS                 \
++   && (!REG_P (X) || !HARD_REGISTER_P (X)          \
++       || (REGNO_REG_CLASS (REGNO (X)) != GENERAL_REGS     \
++           && REGNO_REG_CLASS (REGNO (X)) != IWMMXT_GR_REGS))  \
++   ? GENERAL_REGS :                     \
+    (((MODE) == HImode && ! arm_arch4 && TARGET_MMU_TRAPS	\
+      && (GET_CODE (X) == MEM					\
+ 	 || ((GET_CODE (X) == REG || GET_CODE (X) == SUBREG)	\
+@@ -1556,9 +1576,6 @@
+   unsigned long func_type;
+   /* Record if the function has a variable argument list.  */
+   int uses_anonymous_args;
+-  /* Records if sibcalls are blocked because an argument
+-     register is needed to preserve stack alignment.  */
+-  int sibcall_blocked;
+ }
+ machine_function;
+ 
+diff -urN gcc-3.3.6.cross/gcc/config/arm/crti.asm gcc-3.3.6.cross-mod/gcc/config/arm/crti.asm
+--- gcc-3.3.6.cross/gcc/config/arm/crti.asm	2002-09-28 17:29:36.000000000 +0200
++++ gcc-3.3.6.cross-mod/gcc/config/arm/crti.asm	2006-09-14 12:28:17.059170301 +0200
+@@ -35,6 +35,14 @@
+ # .init sections.  Users may put any desired instructions in those
+ # sections.
+ 
++#ifdef __IWMMXT__
++/* The stack must remain double-word aligned.  The easiest way
++   is to save r3...  */
++#define SAVE_R3 r3,
++#else
++#define SAVE_R3
++#endif
++
+ 	# Note - this macro is complemented by the FUNC_END macro
+ 	# in crtn.asm.  If you change this macro you must also change
+ 	# that macro match.
+@@ -42,12 +50,12 @@
+ #ifdef __thumb__
+ 	.thumb
+ 	
+-	push	{r4, r5, r6, r7, lr}
++	push	{SAVE_R3 r4, r5, r6, r7, lr}
+ #else
+ 	.arm
+ 	#  Create a stack frame and save any call-preserved registers
+ 	mov	ip, sp
+-	stmdb	sp!, {r4, r5, r6, r7, r8, r9, sl, fp, ip, lr, pc}
++	stmdb	sp!, {SAVE_R3 r4, r5, r6, r7, r8, r9, sl, fp, ip, lr, pc}
+ 	sub	fp, ip, #4
+ #endif
+ .endm
+diff -urN gcc-3.3.6.cross/gcc/config/arm/crtn.asm gcc-3.3.6.cross-mod/gcc/config/arm/crtn.asm
+--- gcc-3.3.6.cross/gcc/config/arm/crtn.asm	2002-09-28 17:29:36.000000000 +0200
++++ gcc-3.3.6.cross-mod/gcc/config/arm/crtn.asm	2006-09-14 12:29:27.118003305 +0200
+@@ -31,6 +31,14 @@
+ #    the executable file might be covered by the GNU General Public License.
+ # 
+ 
++#ifdef __IWMMXT__
++/* The stack must remain double-word aligned.  The easiest way
++   is to save r3...  */
++#define REST_R3 r3,
++#else
++#define REST_R3
++#endif
++
+ # This file just makes sure that the .fini and .init sections do in
+ # fact return.  Users may put any desired instructions in those sections.
+ # This file is the last thing linked into any executable.
+@@ -47,13 +55,13 @@
+ #ifdef __thumb__
+ 	.thumb
+ 	
+-	pop	{r4, r5, r6, r7}
++	pop	{REST_R3 r4, r5, r6, r7}
+ 	pop	{r3}
+ 	mov	lr, r3
+ #else
+ 	.arm
+ 	
+-	ldmdb	fp, {r4, r5, r6, r7, r8, r9, sl, fp, sp, lr}
++	ldmdb	fp, {REST_R3 r4, r5, r6, r7, r8, r9, sl, fp, sp, lr}
+ #endif
+ 	
+ #if defined __THUMB_INTERWORK__ || defined __thumb__
+diff -urN gcc-3.3.6.cross/gcc/config/arm/iwmmxt.md gcc-3.3.6.cross-mod/gcc/config/arm/iwmmxt.md
+--- gcc-3.3.6.cross/gcc/config/arm/iwmmxt.md	2006-09-14 09:21:01.376749599 +0200
++++ gcc-3.3.6.cross-mod/gcc/config/arm/iwmmxt.md	2006-09-14 12:32:28.653854237 +0200
+@@ -91,38 +91,51 @@
+    (set_attr "neg_pool_range" "*,1012,*,*,*,*,*,*")]
+ )
+ 
++(define_expand "reload_outsi"
++  [(parallel [(match_operand:SI 0 "general_operand" "=zm")
++         (match_operand:SI 1 "general_operand" "r")
++         (match_operand:SI 2 "register_operand" "=&r")])]
++  "TARGET_REALLY_IWMMXT"
++  "
++  emit_insn (gen_movsi (operands[2], operands[1]));
++  emit_insn (gen_movsi (operands[0], operands[2]));
++  DONE;
++  "
++)
++
++(define_expand "reload_insi"
++  [(parallel [(match_operand:SI 0 "general_operand" "=z")
++         (match_operand:SI 1 "general_operand" "zm")
++         (match_operand:SI 2 "register_operand" "=&r")])]
++  "TARGET_REALLY_IWMMXT"
++  "
++  emit_insn (gen_movsi (operands[2], operands[1]));
++  emit_insn (gen_movsi (operands[0], operands[2]));
++  DONE;
++  "
++)
++
+ (define_insn "*iwmmxt_movsi_insn"
+-  [(set (match_operand:SI 0 "nonimmediate_operand" "=r,r,r, m,z,r,?z,m,z")
+-	(match_operand:SI 1 "general_operand"      "rI,K,mi,r,r,z,m,z,z"))]
++  [(set (match_operand:SI 0 "nonimmediate_operand" "=r,r,r, m,z,r")
++   (match_operand:SI 1 "general_operand"      "rI,K,mi,r,r,z"))]
+   "TARGET_REALLY_IWMMXT
+    && (   register_operand (operands[0], SImode)
+        || register_operand (operands[1], SImode))"
+   "*
+    switch (which_alternative)
+    {
+-   case 0: return \"mov\\t%0, %1\";
+-   case 1: return \"mvn\\t%0, #%B1\";
+-   case 2: return \"ldr\\t%0, %1\";
+-   case 3: return \"str\\t%1, %0\";
+-   case 4: return \"tmcr\\t%0, %1\";
+-   case 5: return \"tmrc\\t%0, %1\";
+-   case 6: return arm_output_load_gr (operands);
+-   case 7: return \"wstrw\\t%1, %0\";
+-   default:return \"wstrw\\t%1, [sp, #-4]!\;wldrw\\t%0, [sp], #4\\t@move CG reg\";
++   case 0: return \"mov%?\\t%0, %1\";
++   case 1: return \"mvn%?\\t%0, #%B1\";
++   case 2: return \"ldr%?\\t%0, %1\";
++   case 3: return \"str%?\\t%1, %0\";
++   case 4: return \"tmcr%?\\t%0, %1\";
++   case 5: return \"tmrc%?\\t%0, %1\";
+   }"
+-  [(set_attr "type"           "*,*,load,store1,*,*,load,store1,*")
+-   (set_attr "length"         "*,*,*,        *,*,*,  16,     *,8")
+-   (set_attr "pool_range"     "*,*,4096,     *,*,*,1024,     *,*")
+-   (set_attr "neg_pool_range" "*,*,4084,     *,*,*,   *,  1012,*")
+-   ;; Note - the "predicable" attribute is not allowed to have alternatives.
+-   ;; Since the wSTRw wCx instruction is not predicable, we cannot support
+-   ;; predicating any of the alternatives in this template.  Instead,
+-   ;; we do the predication ourselves, in cond_iwmmxt_movsi_insn.
+-   (set_attr "predicable"     "no")
+-   ;; Also - we have to pretend that these insns clobber the condition code
+-   ;; bits as otherwise arm_final_prescan_insn() will try to conditionalize
+-   ;; them.
+-   (set_attr "conds" "clob")]
++  [(set_attr "type"           "*,*,load,store1,*,*")
++   (set_attr "length"         "*,*,*,        *,*,*")
++   (set_attr "pool_range"     "*,*,4096,     *,*,*")
++   (set_attr "neg_pool_range" "*,*,4084,     *,*,*")
++   (set_attr "predicable"     "yes")]
+ )
+ 
+ ;; Because iwmmxt_movsi_insn is not predicable, we provide the
+diff -urN gcc-3.3.6.cross/gcc/cse.c gcc-3.3.6.cross-mod/gcc/cse.c
+--- gcc-3.3.6.cross/gcc/cse.c	2004-03-21 17:28:59.000000000 +0100
++++ gcc-3.3.6.cross-mod/gcc/cse.c	2006-09-14 12:34:23.443490687 +0200
+@@ -6218,6 +6218,13 @@
+ 	   we are also doing (set (reg:m2 foo) (subreg:m2 (bar:m1) 0)) so
+ 	   make that equivalence as well.
+ 
++       Note that that is not a legal transformation for vector subregs;
++        (set (subreg:V2SImode (reg:DImode foo) 0) (reg:V2SImode bar))
++       is not equivalent to:
++        (set (reg:DImode foo) (subreg:DImode (reg:V2SImode bar) 0)
++       The first is a cast to vector and preserves the bit pattern, but the
++       second sign-extends the first element.
++
+ 	   However, BAR may have equivalences for which gen_lowpart_if_possible
+ 	   will produce a simpler value than gen_lowpart_if_possible applied to
+ 	   BAR (e.g., if BAR was ZERO_EXTENDed from M2), so we will scan all
+@@ -6234,6 +6241,7 @@
+ 		== (GET_MODE_SIZE (GET_MODE (dest)) - 1) / UNITS_PER_WORD)
+ 	    && (GET_MODE_SIZE (GET_MODE (dest))
+ 		>= GET_MODE_SIZE (GET_MODE (SUBREG_REG (dest))))
++        && ! VECTOR_MODE_P (GET_MODE (dest))
+ 	    && sets[i].src_elt != 0)
+ 	  {
+ 	    enum machine_mode new_mode = GET_MODE (SUBREG_REG (dest));

@@ -1,0 +1,11 @@
+--- glibc-2.3.2/configure.orig	2005-11-12 14:52:52.000000000 -0800
++++ glibc-2.3.2/configure	2005-11-12 14:51:09.000000000 -0800
+@@ -2272,7 +2272,7 @@
+   ac_prog_version=`$CC -v 2>&1 | sed -n 's/^.*version \([egcygnustpi-]*[0-9.]*\).*$/\1/p'`
+   case $ac_prog_version in
+     '') ac_prog_version="v. ?.??, bad"; ac_verc_fail=yes;;
+-    3.[2-9]*)
++    3.[2-9]*|4.[0-9]*)
+        ac_prog_version="$ac_prog_version, ok"; ac_verc_fail=no;;
+     *) ac_prog_version="$ac_prog_version, bad"; ac_verc_fail=yes;;
+ 
