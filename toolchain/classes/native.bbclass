@@ -1,41 +1,52 @@
-inherit base
+# We want native packages to be relocatable
+inherit relocatable
 
 # Native packages are built indirectly via dependency,
 # no need for them to be a direct target of 'world'
 EXCLUDE_FROM_WORLD = "1"
 
 PACKAGES = ""
+PACKAGES_virtclass-native = ""
 PACKAGE_ARCH = "${BUILD_ARCH}"
+
+BASE_PACKAGE_ARCH = "${BUILD_ARCH}"
+BASEPKG_HOST_SYS = "${BUILD_ARCH}${BUILD_VENDOR}-${BUILD_OS}"
+BASEPKG_TARGET_SYS = "${BUILD_ARCH}${BUILD_VENDOR}-${BUILD_OS}"
 
 # When this class has packaging enabled, setting 
 # RPROVIDES becomes unnecessary.
 RPROVIDES = "${PN}"
-
-# Need to resolve package RDEPENDS as well as DEPENDS
-BUILD_ALL_DEPS = "1"
-
-# Break the circular dependency as a result of DEPENDS
-# in package.bbclass
-PACKAGE_DEPENDS = ""
 
 TARGET_ARCH = "${BUILD_ARCH}"
 TARGET_OS = "${BUILD_OS}"
 TARGET_VENDOR = "${BUILD_VENDOR}"
 TARGET_PREFIX = "${BUILD_PREFIX}"
 TARGET_CC_ARCH = "${BUILD_CC_ARCH}"
+TARGET_EXEEXT = "${BUILD_EXEEXT}"
 
 HOST_ARCH = "${BUILD_ARCH}"
 HOST_OS = "${BUILD_OS}"
 HOST_VENDOR = "${BUILD_VENDOR}"
 HOST_PREFIX = "${BUILD_PREFIX}"
 HOST_CC_ARCH = "${BUILD_CC_ARCH}"
+HOST_EXEEXT = "${BUILD_EXEEXT}"
 
 CPPFLAGS = "${BUILD_CPPFLAGS}"
 CFLAGS = "${BUILD_CFLAGS}"
 CXXFLAGS = "${BUILD_CFLAGS}"
 LDFLAGS = "${BUILD_LDFLAGS}"
-LDFLAGS_build-darwin = "-L${STAGING_DIR}/${BUILD_SYS}/lib "
+LDFLAGS_build-darwin = "-L${STAGING_LIBDIR_NATIVE} "
 
+TOOLCHAIN_OPTIONS = ""
+
+STAGING_BINDIR = "${STAGING_BINDIR_NATIVE}"
+STAGING_BINDIR_CROSS = "${STAGING_BINDIR_NATIVE}"
+
+STAGING_DIR_JAVA = "${STAGING_DATADIR_JAVA_NATIVE}"
+DEPENDS_GETTEXT = "gettext-native"
+
+# Don't use site files for native builds
+export CONFIG_SITE = ""
 
 # set the compiler as well. It could have been set to something else
 export CC = "${CCACHE}${HOST_PREFIX}gcc ${HOST_CC_ARCH}"
@@ -49,47 +60,78 @@ export AS = "${HOST_PREFIX}as"
 export RANLIB = "${HOST_PREFIX}ranlib"
 export STRIP = "${HOST_PREFIX}strip"
 
-
 # Path prefixes
-base_prefix = "${exec_prefix}"
-prefix = "${STAGING_DIR}"
-exec_prefix = "${STAGING_DIR}/${BUILD_ARCH}-${BUILD_OS}"
+base_prefix = "${STAGING_DIR_NATIVE}"
+prefix = "${STAGING_DIR_NATIVE}${prefix_native}"
+exec_prefix = "${STAGING_DIR_NATIVE}${prefix_native}"
+libdir = ${base_prefix}${libdir_native}
+base_libdir = ${base_prefix}${base_libdir_native}
+# Since we actually install these into situ there is no staging prefix
+STAGING_DIR_HOST = ""
+STAGING_DIR_TARGET = ""
+SHLIBSDIR = "${STAGING_DIR_NATIVE}/shlibs"
+PKG_CONFIG_DIR = "${libdir}/pkgconfig"
 
-# Base paths
-base_bindir = "${base_prefix}/bin"
-base_sbindir = "${base_prefix}/bin"
-base_libdir = "${base_prefix}/lib"
-
-# Architecture independent paths
-sysconfdir = "${prefix}/etc"
-sharedstatedir = "${prefix}/com"
-localstatedir = "${prefix}/var"
-infodir = "${datadir}/info"
-mandir = "${datadir}/man"
-docdir = "${datadir}/doc"
-servicedir = "${prefix}/srv"
-
-# Architecture dependent paths
-bindir = "${exec_prefix}/bin"
-sbindir = "${exec_prefix}/bin"
-libexecdir = "${exec_prefix}/libexec"
-libdir = "${exec_prefix}/lib"
-includedir = "${exec_prefix}/include"
-oldincludedir = "${exec_prefix}/include"
-
-# Datadir is made arch dependent here, primarily
-# for autoconf macros, and other things that
-# may be manipulated to handle crosscompilation
-# issues.
-datadir = "${exec_prefix}/share"
-
-do_stage () {
-	if [ "${INHIBIT_NATIVE_STAGE_INSTALL}" != "1" ]
+do_stage_native () {
+	# If autotools is active, use the autotools staging function, else 
+	# use our "make install" equivalent
+	if [ "${AUTOTOOLS_NATIVE_STAGE_INSTALL}" = "1" ]
 	then
+		autotools_stage_all
+	else
 		oe_runmake install
 	fi
 }
 
-do_install () {
-	true
+do_stage () {
+	do_stage_native
 }
+
+PKG_CONFIG_PATH .= "${EXTRA_NATIVE_PKGCONFIG_PATH}"
+PKG_CONFIG_SYSROOT_DIR = ""
+
+ORIG_DEPENDS := "${DEPENDS}"
+
+DEPENDS_virtclass-native ?= "${ORIG_DEPENDS}"
+
+def native_virtclass_override(d):
+    if "native" in (bb.data.getVar('BBCLASSEXTEND', d, True) or ""):
+        return 'virtclass-native:'
+
+OVERRIDES =. "${@native_virtclass_override(d)}"
+
+python __anonymous () {
+    # If we've a legacy native do_stage, we need to neuter do_install
+    stagefunc = bb.data.getVar('do_stage', d, True)
+
+    # For now, force legacy mode for native packages using autotools_stage_all
+    if (stagefunc.strip() == "autotools_stage_all"):
+        bb.debug(1, "Forcing legacy staging mode for %s" % bb.data.getVar('FILE', d, 1))
+        bb.data.setVar('FORCE_LEGACY_STAGING', "1", d)
+    elif (stagefunc.strip() != "do_stage_native" and stagefunc.strip() != "autotools_stage_all") and bb.data.getVar('AUTOTOOLS_NATIVE_STAGE_INSTALL', d, 1) == "1":
+        bb.data.setVar("do_install", "      :", d)
+
+    if "native" in (bb.data.getVar('BBCLASSEXTEND', d, True) or ""):
+        pn = bb.data.getVar("PN", d, True)
+        depends = bb.data.getVar("DEPENDS_virtclass-native", d, True)
+        deps = bb.utils.explode_deps(depends)
+        newdeps = []
+        for dep in deps:
+            if dep.endswith("-cross"):
+                newdeps.append(dep.replace("-cross", "-native"))
+            elif not dep.endswith("-native"):
+     
+                newdeps.append(dep + "-native")
+            else:
+                newdeps.append(dep)
+        bb.data.setVar("DEPENDS_virtclass-native", " ".join(newdeps), d)
+        provides = bb.data.getVar("PROVIDES", d, True)
+        for prov in provides.split():
+            if prov.find(pn) != -1:
+                continue
+            if not prov.endswith("-native"):
+    
+                provides = provides.replace(prov, prov + "-native")
+        bb.data.setVar("PROVIDES", provides, d)
+}
+
