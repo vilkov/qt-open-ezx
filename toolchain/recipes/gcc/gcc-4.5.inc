@@ -4,11 +4,11 @@ ARM_INSTRUCTION_SET = "arm"
 require gcc-common.inc
 LICENSE = "GPLv3"
 
-DEPENDS = "mpfr gmp libmpc libelf"
-NATIVEDEPS = "mpfr-native gmp-native libmpc-native"
+DEPENDS = "mpfr gmp libmpc libelf ppl cloog-ppl"
+NATIVEDEPS = "mpfr-native gmp-native libmpc-native ppl-native cloog-ppl-native"
 
 
-INC_PR = "r33"
+INC_PR = "r34"
 
 SRCREV = "170443"
 PV = "4.5"
@@ -184,8 +184,11 @@ S = "${WORKDIR}/${BRANCH}"
 
 EXTRA_OECONF_BASE = " --enable-lto \
 		      --enable-libssp \
-		      --disable-bootstrap --disable-libgomp \
-		      --disable-libmudflap"
+		      --disable-bootstrap \
+		      --disable-libgomp \
+		      --disable-libmudflap \
+		      --with-ppl \
+		      --with-cloog"
 
 EXTRA_OECONF_INITIAL = "--disable-libmudflap --disable-libgomp --disable-libssp --enable-decimal-float=no"
 EXTRA_OECONF_INTERMEDIATE = "--disable-libmudflap --disable-libgomp --disable-libssp"
