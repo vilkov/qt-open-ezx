@@ -2,32 +2,20 @@ DESCRIPTION = "Ncurses library"
 HOMEPAGE = "http://www.gnu.org/software/ncurses/ncurses.html"
 LICENSE = "MIT"
 SECTION = "libs"
-PATCHDATE = "20110115"
-PV = "5.7+${PATCHDATE}"
-PR = "r19"
+PR = "r1"
 
 DEPENDS = "ncurses-native unifdef-native"
 DEPENDS_virtclass-native = "unifdef-native"
 
 inherit autotools binconfig test
 
-SRC_URI = "${GNU_MIRROR}/ncurses/ncurses-5.7.tar.gz;name=tarball \
-        file://ncurses-5.7-20110108-patch.sh.bz2;apply=yes;name=p20110108sh \
-\
-        file://ncurses-5.7-20110115.patch.gz;name=p20110115 \
+SRC_URI = "${GNU_MIRROR}/ncurses/ncurses-${PV}.tar.gz \
         file://tic-hang.patch \
         file://config.cache \
 "
 
-SRC_URI[tarball.md5sum] = "cce05daf61a64501ef6cd8da1f727ec6"
-SRC_URI[tarball.sha256sum] = "0a9bdea5c7de8ded5c9327ed642915f2cc380753f12d4ad120ef7da3ea3498f4"
-SRC_URI[p20110108sh.md5sum] = "ccc7b56c5b4e99d40aa2d3bb7a08f4c6"
-SRC_URI[p20110108sh.sha256sum] = "814a23f0bf4e60ff177ee4dca82be0b94c81daa9dfb59a145e7213718d6f0d97"
-SRC_URI[p20110115.md5sum] = "811cd49a8666395092383f1d0bb66e05"
-SRC_URI[p20110115.sha256sum] = "1992e8149ba11cbabe6d699407de40cbdc49f61db76655d8a06ae0ac5229634e"
-
-FILESPATHPKG =. "${BPN}-5.7:"
-S = "${WORKDIR}/${BPN}-5.7"
+SRC_URI[md5sum] = "8cb9c412e5f2d96bc6f459aa8c6282a1"
+SRC_URI[sha256sum] = "9046298fb440324c9d4135ecea7879ffed8546dd1b58e59430ea07a4633f563b"
 
 PARALLEL_MAKE = ""
 EXTRA_AUTORECONF = "-I m4"
