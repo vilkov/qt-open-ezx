@@ -187,7 +187,7 @@ EXTRA_OECONF_BASE = " --enable-lto \
 		      --disable-bootstrap --disable-libgomp \
 		      --disable-libmudflap"
 
-EXTRA_OECONF_INITIAL = "--without-ppl --without-cloog --disable-libmudflap --disable-libgomp --disable-libssp --enable-decimal-float=no"
+EXTRA_OECONF_INITIAL = "--disable-libmudflap --disable-libgomp --disable-libssp --enable-decimal-float=no"
 EXTRA_OECONF_INTERMEDIATE = "--disable-libmudflap --disable-libgomp --disable-libssp"
 
 EXTRA_OECONF_append_libc-uclibc = " --disable-decimal-float "
