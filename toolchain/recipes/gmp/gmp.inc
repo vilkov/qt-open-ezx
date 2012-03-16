@@ -12,7 +12,7 @@ inherit autotools
 
 ARM_INSTRUCTION_SET = "arm"
 
-
+EXTRA_OECONF = "--enable-cxx"
 EXTRA_OECONF_append_virtclass-native = " --enable-static"
 
 BBCLASSEXTEND = "native nativesdk"
